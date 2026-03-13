@@ -43,6 +43,7 @@
         <a href="portfolio.html">Portfolio</a>
         <a href="platform.html">Platform</a>
         <a href="community.html">Community</a>
+        <a href="careers.html">Careers</a>
         <a class="is-active" href="portal-login.html">Portal</a>
         <a class="nav-cta" href="contact.html">Contact</a>
       </nav>
@@ -67,6 +68,7 @@
             <button class="role-tab" type="button" data-role-tab="clients">Clients</button>
             <button class="role-tab" type="button" data-role-tab="agents">Agents</button>
             <button class="role-tab" type="button" data-role-tab="bookings">Bookings</button>
+            <button class="role-tab" type="button" data-role-tab="mandates">Mandates</button>
             <button class="role-tab" type="button" data-role-tab="comms">Comms</button>
             <button class="role-tab" type="button" data-role-tab="settings">Settings</button>
           </div>
@@ -92,6 +94,10 @@
                     <div class="role-stat">
                       <p>Bookings</p>
                       <strong data-admin-stat-bookings>0</strong>
+                    </div>
+                    <div class="role-stat">
+                      <p>Mandates</p>
+                      <strong data-admin-stat-mandates>0</strong>
                     </div>
                   </div>
                 </div>
@@ -173,6 +179,21 @@
               </div>
             </div>
 
+            <div class="role-panel" data-role-panel="mandates">
+              <div class="dashboard-card">
+                <div class="role-panel-header">
+                  <div>
+                    <h3>DebiCheck mandates</h3>
+                    <p>Client mandates and TT1 submission status.</p>
+                  </div>
+                </div>
+                <p class="form-feedback" data-admin-mandate-feedback role="status" aria-live="polite"></p>
+                <div class="role-list" data-admin-mandates>
+                  <p class="role-empty">Mandate requests will appear here.</p>
+                </div>
+              </div>
+            </div>
+
             <div class="role-panel" data-role-panel="comms">
               <div class="dashboard-card">
                 <div class="role-panel-header">
@@ -244,6 +265,7 @@
           <a href="portal-login.html">Portal</a>
         
           <a href="community.html">Community</a>
+        <a href="careers.html">Careers</a>
           <a href="privacy.html">Privacy</a>
           <a href="legal.html">Legal</a>
           <a href="popia.html">POPIA</a>

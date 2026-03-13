@@ -65,6 +65,7 @@ const signOutButton = document.querySelector("[data-signout]");
 const bookingForm = document.querySelector("[data-booking-form]");
 const paymentFeedback = document.querySelector("[data-payment-feedback]");
 const bookingFeedback = document.querySelector("[data-booking-feedback]");
+const bookingOpenPaymentButton = document.querySelector("[data-booking-open-payment]");
 const loginFeedback = document.querySelector("[data-login-feedback]");
 const registerFeedback = document.querySelector("[data-register-feedback]");
 const otpFeedback = document.querySelector("[data-otp-feedback]");
@@ -76,7 +77,14 @@ const payNowButton = document.querySelector("[data-request-paynow]");
 const openPayNowButton = document.querySelector("[data-open-paynow]");
 const cardPayButton = document.querySelector("[data-request-card]");
 const openCardButton = document.querySelector("[data-open-card]");
+const openMandateButton = document.querySelector("[data-open-mandate]");
 const mandateButton = document.querySelector("[data-request-mandate]");
+const mandateForm = document.querySelector("[data-mandate-form]");
+const cancelMandateButton = document.querySelector("[data-cancel-mandate]");
+const mandateAmountLabel = document.querySelector("[data-mandate-amount]");
+const mandateReferenceLabel = document.querySelector("[data-mandate-reference]");
+const customBankFields = document.querySelector("[data-custom-bank-fields]");
+const customBankNote = document.querySelector("[data-custom-bank-note]");
 const stepElements = document.querySelectorAll("[data-step]");
 const roleTabs = document.querySelectorAll("[data-role-tab]");
 const rolePanels = document.querySelectorAll("[data-role-panel]");
@@ -117,11 +125,15 @@ const adminStatClients = document.querySelector("[data-admin-stat-clients]");
 const adminStatAgents = document.querySelector("[data-admin-stat-agents]");
 const adminStatWorkers = document.querySelector("[data-admin-stat-workers]");
 const adminStatBookings = document.querySelector("[data-admin-stat-bookings]");
+const adminStatMandates = document.querySelector("[data-admin-stat-mandates]");
 const adminRecentBookings = document.querySelector("[data-admin-recent-bookings]");
 const adminClientsList = document.querySelector("[data-admin-clients]");
 const adminAgentsList = document.querySelector("[data-admin-agents]");
 const adminWorkersList = document.querySelector("[data-admin-workers]");
 const adminBookingsList = document.querySelector("[data-admin-bookings]");
+const adminMandatesList = document.querySelector("[data-admin-mandates]");
+const adminMandateExportButton = document.querySelector("[data-admin-export-mandates]");
+const adminMandateFeedback = document.querySelector("[data-admin-mandate-feedback]");
 const adminCommsForm = document.querySelector("[data-admin-comms-form]");
 const adminCommsFeedback = document.querySelector("[data-admin-comms-feedback]");
 const adminCommsRecent = document.querySelector("[data-admin-comms-recent]");
@@ -141,7 +153,10 @@ let workerFilter = "today";
 let agentDataLoaded = false;
 let adminDataLoaded = false;
 let workerFiltersBound = false;
+let adminMandatesBound = false;
 let adminCommsBound = false;
+
+const CUSTOM_MANDATE_BANK_ID = "__other__";
 
 const showMessage = (message) => {
   if (!portalMessage) return;
@@ -166,6 +181,24 @@ const disableForm = (form, disabled) => {
   form.querySelectorAll("input, select, textarea, button").forEach((el) => {
     el.disabled = disabled;
   });
+};
+
+const downloadBase64File = (base64, fileName, mimeType) => {
+  if (!base64 || !fileName) return;
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 };
 
 const setLoadingState = () => {
@@ -337,6 +370,102 @@ if (!isFirebaseReady) {
     return `R${(cents / 100).toFixed(2)}`;
   };
 
+  const toIsoDateValue = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const buildDefaultMandateStartDate = (collectionDay) => {
+    const today = new Date();
+    const target = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 2, 0).getDate();
+    const safeDay = Math.min(Math.max(Number(collectionDay || 1), 1), monthEnd);
+    target.setDate(safeDay);
+    return toIsoDateValue(target);
+  };
+
+  const setMandateFieldIfEmpty = (selector, value) => {
+    if (!mandateForm || value === undefined || value === null || value === "") return;
+    const field = mandateForm.querySelector(selector);
+    if (field && !field.value) {
+      field.value = value;
+    }
+  };
+
+  const setMandateFormVisible = (visible) => {
+    if (!mandateForm) return;
+    mandateForm.classList.toggle("is-hidden", !visible);
+  };
+
+  const syncCustomMandateBankFields = () => {
+    if (!mandateForm) return;
+    const bankSelect = mandateForm.querySelector("select[name='debtor_bank_id']");
+    const customBankIdField = mandateForm.querySelector("input[name='custom_bank_id']");
+    const customBankNameField = mandateForm.querySelector("input[name='custom_bank_name']");
+    const isCustomBank = bankSelect?.value === CUSTOM_MANDATE_BANK_ID;
+
+    customBankFields?.classList.toggle("is-hidden", !isCustomBank);
+    customBankNote?.classList.toggle("is-hidden", !isCustomBank);
+
+    if (customBankIdField) {
+      customBankIdField.required = Boolean(isCustomBank);
+    }
+    if (customBankNameField) {
+      customBankNameField.required = Boolean(isCustomBank);
+    }
+  };
+
+  const prefillMandateForm = (data) => {
+    if (!mandateForm || !data) return;
+    const reference = String(data.mandateReference || data.clientCode || currentUser?.uid || "").trim();
+    const amountCents = Number(data.mandateAmountCents || 0);
+    const bankSelect = mandateForm.querySelector("select[name='debtor_bank_id']");
+    const customBankIdField = mandateForm.querySelector("input[name='custom_bank_id']");
+    const customBankNameField = mandateForm.querySelector("input[name='custom_bank_name']");
+    const storedBankId = String(data.mandateDebtorBankId || "").trim();
+    const storedBankName = String(data.mandateDebtorBankName || "").trim();
+    const hasPresetBank = Boolean(
+      bankSelect && storedBankId && Array.from(bankSelect.options).some((option) => option.value === storedBankId)
+    );
+    if (mandateAmountLabel) {
+      mandateAmountLabel.textContent = `Monthly amount: ${formatCurrency(amountCents)}`;
+    }
+    if (mandateReferenceLabel) {
+      mandateReferenceLabel.textContent = reference || "Pending";
+    }
+
+    setMandateFieldIfEmpty("input[name='debtor_name']", data.fullName || "");
+    setMandateFieldIfEmpty(
+      "select[name='debtor_bank_id']",
+      storedBankId ? (hasPresetBank ? storedBankId : CUSTOM_MANDATE_BANK_ID) : ""
+    );
+    if (customBankIdField && !hasPresetBank && !customBankIdField.value) {
+      customBankIdField.value = storedBankId;
+    }
+    if (customBankNameField && !hasPresetBank && !customBankNameField.value) {
+      customBankNameField.value = storedBankName;
+    }
+    setMandateFieldIfEmpty("input[name='debtor_branch_number']", data.mandateBranchNumber || "");
+    setMandateFieldIfEmpty("select[name='debtor_account_type']", data.mandateAccountType || "1");
+    setMandateFieldIfEmpty("select[name='debtor_id_type']", data.mandateIdType || "2");
+    setMandateFieldIfEmpty("input[name='debtor_id']", data.IdNumber || "");
+    setMandateFieldIfEmpty(
+      "input[name='start_date']",
+      data.mandateStartDate || buildDefaultMandateStartDate(data.mandateCollectionDay || 1)
+    );
+    setMandateFieldIfEmpty(
+      "input[name='collection_day']",
+      String(Number(data.mandateCollectionDay || 1) || 1)
+    );
+    setMandateFieldIfEmpty(
+      "input[name='tracking_days']",
+      String(Number(data.mandateTrackingDays || 0))
+    );
+    syncCustomMandateBankFields();
+  };
+
   const normalizedStatus = (value) =>
     String(value || "")
       .trim()
@@ -365,11 +494,30 @@ if (!isFirebaseReady) {
     const hasOutstanding = outstandingBalance > 0;
     const mandateOfferStatus = normalizedStatus(data.mandateOfferStatus);
     const mandateStatus = normalizedStatus(data.mandateStatus);
-    const mandateActive = ["active", "accepted", "signed"].includes(mandateStatus);
-    const mandateInFlight = ["requested", "pending_signature"].includes(mandateStatus);
+    const mandateActive = ["active", "accepted", "signed", "future"].includes(mandateStatus);
+    const mandateInFlight = [
+      "requested",
+      "queued",
+      "submitted",
+      "exported",
+      "pending_signature",
+      "pending_authorisation",
+      "pending_authorization",
+      "processing",
+    ].includes(mandateStatus);
+    const mandateFailed = [
+      "submission_failed",
+      "rejected",
+      "cancelled",
+      "expired",
+      "inactive",
+      "suspended",
+    ].includes(mandateStatus);
     const hasMandateOffer =
       mandateOfferStatus === "offered" && Number(data.mandateAmountCents || 0) > 0;
     const servicesEnabled = data.servicesEnabled === true;
+    const mandateReason = String(data.mandateReason || "").trim();
+    const mandateUrl = String(data.mandateUrl || "").trim();
 
     let title = "Access Granted";
     let message = "Your account is active. You can submit bookings below.";
@@ -385,6 +533,10 @@ if (!isFirebaseReady) {
     } else if (!inspectionDone) {
       title = "Inspection Pending";
       message = "We will schedule your inspection and notify you once pricing is ready.";
+    } else if (mandateFailed) {
+      title = "Mandate Needs Attention";
+      message =
+        mandateReason || "Your DebiCheck mandate needs attention. Please review your details and resubmit.";
     } else if (hasMandateOffer && !mandateActive && !mandateInFlight) {
       title = "Monthly Price Awaiting Approval";
       message = `Your inspection is complete. A monthly price of ${formatCurrency(
@@ -392,7 +544,11 @@ if (!isFirebaseReady) {
       )} is ready for acceptance.`;
     } else if (mandateInFlight) {
       title = "Mandate In Progress";
-      message = "Your mandate is being prepared. You'll receive a link shortly.";
+      message =
+        mandateReason ||
+        (mandateUrl
+          ? "Your DebiCheck request is ready. Open the mandate link to continue."
+          : "Your DebiCheck request is being processed.");
     } else if (!mandateActive) {
       title = "Mandate Required";
       message = "Please complete your mandate before services can start.";
@@ -417,7 +573,10 @@ if (!isFirebaseReady) {
     updateStep("adminFee", adminFeePaid ? "Paid" : "Payment required");
     updateStep("inspection", inspectionDone ? "Completed" : "Pending");
     updateStep("offer", hasMandateOffer || mandateInFlight || mandateActive ? "Sent" : "Awaiting pricing");
-    updateStep("mandate", mandateActive ? "Active" : mandateInFlight ? "In progress" : "Not started");
+    updateStep(
+      "mandate",
+      mandateActive ? "Active" : mandateFailed ? "Retry required" : mandateInFlight ? "In progress" : "Not started"
+    );
     updateStep("activation", servicesEnabled ? "Active" : "Pending");
 
     const payNowUrl = String(data.payNowUrl || "");
@@ -440,11 +599,22 @@ if (!isFirebaseReady) {
       }
     }
 
+    if (openMandateButton) {
+      if (mandateUrl) {
+        openMandateButton.classList.remove("is-hidden");
+        openMandateButton.onclick = () => window.open(mandateUrl, "_blank");
+      } else {
+        openMandateButton.classList.add("is-hidden");
+      }
+    }
+
     if (mandateButton) {
       if (hasMandateOffer && !mandateActive && !mandateInFlight) {
         mandateButton.classList.remove("is-hidden");
+        prefillMandateForm(data);
       } else {
         mandateButton.classList.add("is-hidden");
+        setMandateFormVisible(false);
       }
     }
 
@@ -652,6 +822,12 @@ if (!isFirebaseReady) {
           mandateAmountCents: 0,
           mandateOfferStatus: "pending",
           mandateReference: clientCode,
+          mandateAuthType: "DELAYED",
+          mandateFrequencyCode: "MNTH",
+          mandateInstalments: 12,
+          mandateTrackingDays: 0,
+          mandateDebitValueTypeId: "1",
+          mandateCollectionDay: "1",
           mandateStatusCode: "",
           mandateReason: "",
           mandateUrl: "",
@@ -856,8 +1032,138 @@ if (!isFirebaseReady) {
     cardPayButton.addEventListener("click", () => startPaymentRequest("peach"));
   }
 
+  if (mandateForm) {
+    const branchField = mandateForm.querySelector("input[name='debtor_branch_number']");
+    const accountField = mandateForm.querySelector("input[name='debtor_account_number']");
+    const idField = mandateForm.querySelector("input[name='debtor_id']");
+    const startDateField = mandateForm.querySelector("input[name='start_date']");
+    const collectionDayField = mandateForm.querySelector("input[name='collection_day']");
+    const trackingDaysField = mandateForm.querySelector("input[name='tracking_days']");
+    const bankSelect = mandateForm.querySelector("select[name='debtor_bank_id']");
+    const customBankIdField = mandateForm.querySelector("input[name='custom_bank_id']");
+
+    if (branchField) {
+      branchField.addEventListener("input", () => {
+        branchField.value = branchField.value.replace(/\D/g, "").slice(0, 6);
+      });
+    }
+
+    if (accountField) {
+      accountField.addEventListener("input", () => {
+        accountField.value = accountField.value.replace(/[^\d/]/g, "");
+      });
+    }
+
+    if (idField) {
+      idField.addEventListener("input", () => {
+        idField.value = idField.value.trim();
+      });
+    }
+
+    if (customBankIdField) {
+      customBankIdField.addEventListener("input", () => {
+        customBankIdField.value = customBankIdField.value.replace(/\D/g, "").slice(0, 6);
+      });
+    }
+
+    if (bankSelect) {
+      bankSelect.addEventListener("change", () => {
+        syncCustomMandateBankFields();
+      });
+    }
+
+    if (trackingDaysField) {
+      trackingDaysField.addEventListener("input", () => {
+        const value = Math.min(10, Math.max(0, Number(trackingDaysField.value || 0)));
+        trackingDaysField.value = String(Number.isNaN(value) ? 0 : value);
+      });
+    }
+
+    if (collectionDayField) {
+      collectionDayField.addEventListener("input", () => {
+        const value = Math.min(31, Math.max(1, Number(collectionDayField.value || 1)));
+        collectionDayField.value = String(Number.isNaN(value) ? 1 : value);
+      });
+    }
+
+    if (startDateField && collectionDayField) {
+      startDateField.addEventListener("change", () => {
+        if (!startDateField.value) return;
+        const date = new Date(`${startDateField.value}T00:00:00`);
+        if (!Number.isNaN(date.getTime()) && !collectionDayField.value) {
+          collectionDayField.value = String(date.getDate());
+        }
+      });
+    }
+
+    mandateForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!currentUser || !currentUserData) return;
+
+      setFeedback(paymentFeedback, "");
+      const mandateAmountCents = Number(currentUserData.mandateAmountCents || 0);
+      if (!mandateAmountCents) {
+        setFeedback(paymentFeedback, "A monthly price is not available yet.", true);
+        return;
+      }
+
+      const formData = new FormData(mandateForm);
+      const reference =
+        String(currentUserData.mandateReference || currentUserData.clientCode || currentUser.uid).trim();
+      const selectedBankId = String(formData.get("debtor_bank_id") || "").trim();
+      const isCustomBank = selectedBankId === CUSTOM_MANDATE_BANK_ID;
+      const selectedBankName =
+        bankSelect && bankSelect.selectedIndex >= 0
+          ? bankSelect.options[bankSelect.selectedIndex].textContent
+          : "";
+      const debtorBankId = String((isCustomBank ? formData.get("custom_bank_id") : selectedBankId) || "").trim();
+      const debtorBankName = String(
+        (isCustomBank ? formData.get("custom_bank_name") : selectedBankName) || ""
+      ).trim();
+
+      try {
+        const response = await functions.httpsCallable("createMandateRequest")({
+          mandateAmountCents,
+          mandateType: currentUserData.mandateType || "debiCheck",
+          mandateReference: reference,
+          clientCode: currentUserData.clientCode || reference,
+          debtorName: String(formData.get("debtor_name") || "").trim(),
+          debtorBankId,
+          debtorBankName,
+          debtorBranchNumber: String(formData.get("debtor_branch_number") || "").trim(),
+          debtorAccountNumber: String(formData.get("debtor_account_number") || "").trim(),
+          debtorAccountType: String(formData.get("debtor_account_type") || "").trim(),
+          debtorIdType: String(formData.get("debtor_id_type") || "").trim(),
+          debtorId: String(formData.get("debtor_id") || "").trim(),
+          startDate: String(formData.get("start_date") || "").trim(),
+          collectionDay: Number(formData.get("collection_day") || 1),
+          trackingIndicator: Number(formData.get("tracking_days") || 0),
+        });
+        const result = response.data || {};
+        setFeedback(
+          paymentFeedback,
+          result.message ||
+            (result.status === "submission_failed"
+              ? "Mandate request saved, but NuPay submission failed."
+              : "DebiCheck request captured.")
+        );
+        if (result.mandateUrl && openMandateButton) {
+          openMandateButton.classList.remove("is-hidden");
+          openMandateButton.onclick = () => window.open(result.mandateUrl, "_blank");
+        }
+        setMandateFormVisible(false);
+        mandateForm.reset();
+        prefillMandateForm(currentUserData);
+      } catch (error) {
+        setFeedback(paymentFeedback, error.message || "Unable to request mandate.", true);
+      }
+    });
+
+    syncCustomMandateBankFields();
+  }
+
   if (mandateButton) {
-    mandateButton.addEventListener("click", async () => {
+    mandateButton.addEventListener("click", () => {
       if (!currentUser || !currentUserData) return;
       setFeedback(paymentFeedback, "");
       const mandateAmountCents = Number(currentUserData.mandateAmountCents || 0);
@@ -865,19 +1171,19 @@ if (!isFirebaseReady) {
         setFeedback(paymentFeedback, "A monthly price is not available yet.");
         return;
       }
-      const reference =
-        String(currentUserData.mandateReference || currentUserData.clientCode || currentUser.uid).trim();
-      try {
-        await functions.httpsCallable("createMandateRequest")({
-          mandateAmountCents,
-          mandateType: currentUserData.mandateType || "debiCheck",
-          mandateReference: reference,
-          clientCode: currentUserData.clientCode || reference,
-        });
-        setFeedback(paymentFeedback, "Mandate request sent. We'll notify you when the link is ready.");
-      } catch (error) {
-        setFeedback(paymentFeedback, error.message || "Unable to request mandate.", true);
+      prefillMandateForm(currentUserData);
+      setMandateFormVisible(true);
+    });
+  }
+
+  if (cancelMandateButton) {
+    cancelMandateButton.addEventListener("click", () => {
+      if (mandateForm) {
+        mandateForm.reset();
+        prefillMandateForm(currentUserData);
       }
+      setMandateFormVisible(false);
+      setFeedback(paymentFeedback, "");
     });
   }
 
@@ -886,6 +1192,10 @@ if (!isFirebaseReady) {
       event.preventDefault();
       setFeedback(bookingFeedback, "");
       if (!currentUser || !currentUserData) return;
+      if (bookingOpenPaymentButton) {
+        bookingOpenPaymentButton.classList.add("is-hidden");
+        bookingOpenPaymentButton.onclick = null;
+      }
 
       const formData = new FormData(bookingForm);
       const propertyName = String(formData.get("property_name") || "").trim();
@@ -907,37 +1217,71 @@ if (!isFirebaseReady) {
         return;
       }
 
-      const bookingDate = new Date(`${bookingDateValue}T00:00:00`);
-      const bookingTime = new Date(`1970-01-01T${bookingTimeValue}:00`);
-      const dateTime = new Date(`${bookingDateValue}T${bookingTimeValue}:00`);
-
       const bookingPayload = {
-        userId: currentUser.uid,
-        referenceCode: currentUserData.clientCode || "",
-        fullName: currentUserData.fullName || "",
-        address: currentUserData.address || "",
-        category,
-        cellphone: currentUserData.cellphone || "",
-        email: currentUserData.email || currentUser.email || "",
-        services: selectedServices,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        bookingDate: firebase.firestore.Timestamp.fromDate(bookingDate),
-        bookingTime: firebase.firestore.Timestamp.fromDate(bookingTime),
-        dateTime: firebase.firestore.Timestamp.fromDate(dateTime),
-        serviceName: selectedServices.join(", "),
         selectedProperty: propertyName,
         propertyAddress,
+        category,
+        bookingDateValue,
+        bookingTimeValue,
+        services: selectedServices,
         priorities,
       };
 
       try {
-        await db
-          .collection("users")
-          .doc(currentUser.uid)
-          .collection("bookings")
-          .add(bookingPayload);
-        setFeedback(bookingFeedback, "Booking submitted. We'll confirm shortly.");
-        bookingForm.reset();
+        const response = await functions.httpsCallable("submitBookingRequest")({
+          gateway: "ozow",
+          booking: bookingPayload,
+        });
+        const result = response.data || {};
+
+        if (result.status === "created") {
+          setFeedback(bookingFeedback, "Booking submitted. We'll confirm shortly.");
+          bookingForm.reset();
+          return;
+        }
+
+        if (result.status !== "payment_required" || !result.requestId) {
+          throw new Error("We couldn't start the payment request.");
+        }
+
+        setFeedback(bookingFeedback, "Preparing your payment link...");
+        stopPayNowListener();
+        payNowListener = db
+          .collection("paynow_requests")
+          .doc(result.requestId)
+          .onSnapshot((doc) => {
+            const data = doc.data() || {};
+            const redirectUrl = String(data.redirectUrl || data.payNowUrl || "").trim();
+            const status = String(data.status || data.payNowStatus || "").trim().toLowerCase();
+            const errorMessage = String(data.errorMessage || "").trim();
+
+            if (redirectUrl && bookingOpenPaymentButton) {
+              bookingOpenPaymentButton.classList.remove("is-hidden");
+              bookingOpenPaymentButton.onclick = () => window.open(redirectUrl, "_blank");
+              setFeedback(bookingFeedback, "Payment link is ready. Complete payment to confirm your booking.");
+            }
+
+            if (status === "paid") {
+              if (bookingOpenPaymentButton) {
+                bookingOpenPaymentButton.classList.add("is-hidden");
+                bookingOpenPaymentButton.onclick = null;
+              }
+              setFeedback(bookingFeedback, "Payment received. Your booking is confirmed.");
+              bookingForm.reset();
+              stopPayNowListener();
+            } else if (errorMessage || status === "failed" || status === "declined") {
+              if (bookingOpenPaymentButton) {
+                bookingOpenPaymentButton.classList.add("is-hidden");
+                bookingOpenPaymentButton.onclick = null;
+              }
+              setFeedback(
+                bookingFeedback,
+                errorMessage || "Payment was not completed. Please try again.",
+                true
+              );
+              stopPayNowListener();
+            }
+          });
       } catch (error) {
         setFeedback(bookingFeedback, error.message || "Unable to submit booking.", true);
       }
@@ -1468,6 +1812,71 @@ if (!isFirebaseReady) {
     }
     if (adminBookingsList) {
       renderBookingList(adminBookingsList, bookings, "Bookings will appear here.");
+    }
+
+    let mandates = [];
+    try {
+      const mandateSnap = await db.collection("mandate_requests").orderBy("createdAt", "desc").limit(30).get();
+      mandates = mandateSnap.docs.map((doc) => ({ id: doc.id, data: doc.data() || {} }));
+    } catch (error) {
+      try {
+        const mandateSnap = await db.collection("mandate_requests").limit(30).get();
+        mandates = mandateSnap.docs.map((doc) => ({ id: doc.id, data: doc.data() || {} }));
+      } catch (fallbackError) {
+        mandates = [];
+      }
+    }
+
+    if (adminStatMandates) adminStatMandates.textContent = `${mandates.length}`;
+
+    if (adminMandatesList) {
+      adminMandatesList.innerHTML = "";
+      if (!mandates.length) {
+        clearList(adminMandatesList, "Mandate requests will appear here.");
+      } else {
+        mandates.forEach((mandate) => {
+          const data = mandate.data || {};
+          const card = createRoleCard({
+            title: data.mandateReference || data.clientCode || mandate.id,
+            meta: [
+              data.clientCode ? `Client: ${data.clientCode}` : "",
+              data.debtorBankName ? `Bank: ${data.debtorBankName}` : "",
+              data.maskedAccountNumber ? `Account: ${data.maskedAccountNumber}` : "",
+              Number(data.mandateAmountCents || 0)
+                ? `Amount: ${formatCurrency(data.mandateAmountCents || 0)}`
+                : "",
+              data.status ? `Status: ${formatStatusLabel(data.status)}` : "",
+              data.statusReason || "",
+              data.createdAt ? formatDateTime(toDate(data.createdAt)) : "",
+            ],
+          });
+          adminMandatesList.appendChild(card);
+        });
+      }
+    }
+
+    if (adminMandateExportButton && functions && !adminMandatesBound) {
+      adminMandatesBound = true;
+      adminMandateExportButton.addEventListener("click", async () => {
+        setFeedback(adminMandateFeedback, "");
+        try {
+          const result = await functions.httpsCallable("exportNuPayMandatesCsv")({ limit: 200 });
+          const payload = result.data || {};
+          if (!Number(payload.count || 0)) {
+            setFeedback(adminMandateFeedback, "No queued mandates are ready for export.");
+            return;
+          }
+          downloadBase64File(payload.csvBase64, payload.fileName, "text/csv;charset=utf-8");
+          setFeedback(
+            adminMandateFeedback,
+            `Exported ${payload.count} mandate${Number(payload.count) === 1 ? "" : "s"} to ${payload.fileName}.`
+          );
+          adminDataLoaded = false;
+          initAdminDashboard();
+        } catch (error) {
+          setFeedback(adminMandateFeedback, error.message || "Unable to export mandates.", true);
+        }
+      });
     }
 
     if (adminCommsForm && !adminCommsBound) {
