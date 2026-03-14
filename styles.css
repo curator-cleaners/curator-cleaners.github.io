@@ -617,6 +617,10 @@ body.nav-open .site-footer {
   gap: 14px;
 }
 
+.contact-form .btn {
+  margin-top: 10px;
+}
+
 .service-panel:hover,
 .destination-card:hover {
   transform: translateY(-4px);
